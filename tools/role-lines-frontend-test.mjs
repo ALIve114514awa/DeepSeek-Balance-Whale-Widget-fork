@@ -61,12 +61,9 @@ const roleOnlyModule = () => ({ type: 'random', randomSource: 'role', lines: [] 
 function mixedCounts(box, rng, createModule, samples) {
   const counts = Object.create(null)
   for (let i = 0; i < samples; i++) {
-    // A fresh module makes these initial-draw interval checks independent of
-    // non-repeat memory and of the implementation's pool ordering.
-    // Stratify the pool choice and its independent within-pool draw separately.
-    const fraction = (i + 0.5) / samples
-    let call = 0
-    rng.random = () => call++ === 0 ? fraction : (fraction * 2) % 1
+    // A fresh module tests the initial equal-probability draw without last-line
+    // exclusion. Stratify a single draw over the entire combined pool.
+    rng.random = () => (i + 0.5) / samples
     const result = box.bubbleRandomContent(createModule())
     counts[result.txt] = (counts[result.txt] || 0) + 1
   }
@@ -205,11 +202,11 @@ test('role text uses module style instead of an unrelated fallback line style', 
   assert.equal(mod._lastPick, undefined)
 })
 
-test('role-source mixed draws reach both role lines and the original weighted global lines', () => {
+test('every role and original global sentence has one unit of weight', () => {
   const { box, rng } = sandbox()
   box.roleLinesCfg = sampleRoles()
   const counts = mixedCounts(box, rng, () => globalModule('role'), 120)
-  assert.deepEqual(counts, { '角色A句1': 30, '角色A句2': 30, '全局句1': 6, '全局句2': 54 })
+  assert.deepEqual(counts, { '角色A句1': 30, '角色A句2': 30, '全局句1': 30, '全局句2': 30 })
 })
 
 test('a new module using the actual shipped defaults can still draw a built-in global line', () => {
@@ -241,9 +238,8 @@ test('mixed draws retain every global style object while role-only draws use mod
   box.roleLinesCfg = sampleRoles()
   const before = JSON.stringify(box.roleLinesCfg)
   const reached = new Set()
-  for (const [poolDraw, lineDraw] of [[0, 0], [0, 0.9], [0.9, 0], [0.9, 0.9]]) {
-    let call = 0
-    rng.random = () => call++ === 0 ? poolDraw : lineDraw
+  for (const fraction of [0.125, 0.375, 0.625, 0.875]) {
+    rng.random = () => fraction
     const mod = globalModule('role')
     mod.color = '#abcdef'; mod.size = 3
     const linesBefore = JSON.stringify(mod.lines)
@@ -265,20 +261,23 @@ test('mixed draws retain every global style object while role-only draws use mod
   assert.equal(JSON.stringify(box.roleLinesCfg), before)
 })
 
-test('mixed global weights use the original minimum-one, numeric, and fractional rules', () => {
+test('mixed draws ignore saved negative, zero, numeric and fractional weights without rewriting them', () => {
   const { box, rng } = sandbox()
   box.roleLinesCfg = { enabled: true, roles: { A: { lines: [{ text: '角色A句1', w: 999 }] } } }
   const create = () => ({ type: 'random', randomSource: 'role', lines: [
     { t: '全局负权重', w: -8 }, { t: '全局零权重', w: 0 },
     { t: '全局缺省权重' }, { t: '全局字符串权重', w: '3' }, { t: '全局小数权重', w: 2.5 },
   ] })
-  assert.deepEqual(mixedCounts(box, rng, create, 170), {
-    '角色A句1': 85, '全局负权重': 10, '全局零权重': 10,
-    '全局缺省权重': 10, '全局字符串权重': 30, '全局小数权重': 25,
+  assert.deepEqual(mixedCounts(box, rng, create, 120), {
+    '角色A句1': 20, '全局负权重': 20, '全局零权重': 20,
+    '全局缺省权重': 20, '全局字符串权重': 20, '全局小数权重': 20,
   })
+  const mod = create(), before = JSON.stringify(mod.lines)
+  box.bubbleRandomContent(mod)
+  assert.equal(JSON.stringify(mod.lines), before)
 })
 
-test('overlapping texts keep global styles and equal role weight in their separate pools', () => {
+test('cross-pool duplicate text gets one chance and retains its global style', () => {
   const { box, rng } = sandbox()
   box.roleLinesCfg = { enabled: true, roles: { A: { lines: [
     { text: ' 共同测试句 ' }, { text: '角色A独有句' },
@@ -286,7 +285,7 @@ test('overlapping texts keep global styles and equal role weight in their separa
   const create = () => ({ type: 'random', randomSource: 'role', lines: [
     { t: '共同测试句', w: 7, bold: false, color: '#234567', tags: ['global'] },
   ] })
-  assert.deepEqual(mixedCounts(box, rng, create, 80), { '共同测试句': 60, '角色A独有句': 20 })
+  assert.deepEqual(mixedCounts(box, rng, create, 80), { '共同测试句': 40, '角色A独有句': 40 })
   for (let i = 0; i < 8; i++) {
     rng.random = () => (i + 0.5) / 8
     const mod = create(), result = box.roleLinesMixedContent(mod)
@@ -298,7 +297,7 @@ test('overlapping texts keep global styles and equal role weight in their separa
   }
 })
 
-test('duplicate global text retains only the first global weight and style in mixed draws', () => {
+test('duplicate global text counts once and retains the first global style', () => {
   const { box, rng } = sandbox()
   box.roleLinesCfg = { enabled: true, roles: { A: { lines: [{ text: '角色A独有句' }] } } }
   const create = () => ({ type: 'random', randomSource: 'role', lines: [
@@ -358,32 +357,52 @@ test('role changes immediately replace only the role portion of mixed eligibilit
     const counts = mixedCounts(box, rng, () => globalModule('role'), 120)
     assert.deepEqual(counts, {
       ['角色' + id + '句1']: 30, ['角色' + id + '句2']: 30,
-      '全局句1': 6, '全局句2': 54,
+      '全局句1': 30, '全局句2': 30,
     })
   }
 })
 
-test('pool size and global weight cannot change the 50:50 category choice', () => {
+test('category weight equals sentence count for one, several and maximum-sized role pools', () => {
   const { box, rng } = sandbox()
   for (const size of [1, 2, 40, 500]) {
     box.roleLinesCfg = { enabled: true, roles: { A: { lines: Array.from({ length: size }, (_, i) => ({ text: '角色句' + i })) } } }
     const counts = mixedCounts(box, rng, () => ({ type: 'random', randomSource: 'role', lines: [
       { t: '全局句', w: 1000000 },
-    ] }), 1000)
-    assert.equal(counts['全局句'], 500)
-    assert.equal(Object.entries(counts).filter(([text]) => text.startsWith('角色')).reduce((sum, [, count]) => sum + count, 0), 500)
+    ] }), (size + 1) * 4)
+    assert.equal(counts['全局句'], 4)
+    assert.equal(Object.entries(counts).filter(([text]) => text.startsWith('角色')).reduce((sum, [, count]) => sum + count, 0), size * 4)
+    assert.ok(Object.values(counts).every(count => count === 4))
   }
 })
 
-test('single-line categories can repeat without redirecting their 50:50 chance', () => {
+test('two distinct sentences alternate rather than repeat a single-sentence category', () => {
   const { box, rng } = sandbox()
   box.roleLinesCfg = { enabled: true, roles: { A: { lines: [{ text: '角色单句' }] } } }
-  const mod = { type: 'random', randomSource: 'role', lines: [{ t: '全局单句', w: 9 }] }
   for (const fraction of [0.49, 0.5]) {
+    const mod = { type: 'random', randomSource: 'role', lines: [{ t: '全局单句', w: 9 }] }
     rng.random = () => fraction
-    const expected = fraction < 0.5 ? '角色单句' : '全局单句'
-    for (let i = 0; i < 100; i++) assert.equal(box.bubbleRandomContent(mod).txt, expected)
+    const first = fraction < 0.5 ? '角色单句' : '全局单句'
+    const second = fraction < 0.5 ? '全局单句' : '角色单句'
+    for (let i = 0; i < 100; i++) assert.equal(box.bubbleRandomContent(mod).txt, i % 2 ? second : first)
   }
+})
+
+test('excluding the previous sentence leaves every remaining sentence equally likely', () => {
+  const { box, rng } = sandbox()
+  box.roleLinesCfg = { enabled: true, roles: { A: { lines: [
+    { text: '角色A上一句' }, { text: '角色A句2' }, { text: '角色A句3' },
+  ] } } }
+  const counts = {}
+  for (let i = 0; i < 40; i++) {
+    const mod = globalModule('role')
+    rng.random = () => 0
+    assert.equal(box.bubbleRandomContent(mod).txt, '角色A上一句')
+    rng.random = () => (i + 0.5) / 40
+    const text = box.bubbleRandomContent(mod).txt
+    assert.notEqual(text, '角色A上一句')
+    counts[text] = (counts[text] || 0) + 1
+  }
+  assert.deepEqual(counts, { '角色A句2': 10, '角色A句3': 10, '全局句1': 10, '全局句2': 10 })
 })
 
 test('no global sentences means all draws use the current role', () => {

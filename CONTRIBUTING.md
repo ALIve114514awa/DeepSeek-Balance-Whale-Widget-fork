@@ -35,7 +35,7 @@ dsh-whale-widget/
 ├── package.json                     36 行   DSH bundle 插件元数据（dsh.bundle.patch → cordis.patch.yml）
 ├── cordis.patch.yml                 15 行   插件挂载声明
 ├── ROLE-LINES.md                         角色台词的配置、接口与兼容行为
-├── README.md                       483 行   安装 / 使用 / 定价 / 完整目录结构（动代码前先读它）
+├── README.md                       492 行   安装 / 使用 / 定价 / 完整目录结构（动代码前先读它）
 ├── PROVENANCE.md                    35 行   素材来源与许可范围（动 assets/ 前必读）
 ├── whale-widget-prompt.md          202 行   完整规格、视觉参数、路由清单、维护提示词（二次开发入口）
 │

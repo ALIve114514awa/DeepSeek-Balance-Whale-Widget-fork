@@ -10604,7 +10604,7 @@ function renderModuleEditor() {
     moduleBodyEl.appendChild(sourceRow)
     var sourceHint = document.createElement('div')
     sourceHint.className = 'dshwv-bubsec'
-    sourceHint.textContent = '以下语句始终参与随机；选择「当前角色」时，还会混入该角色台词。'
+    sourceHint.textContent = '角色台词有效时，与以下语句合并去重，每句权重都为 1。以下权重仅在全局来源或没有有效角色台词时生效。'
     moduleBodyEl.appendChild(sourceHint)
     // 表头:权重 | 内容 | 操作
     var hint = document.createElement('div')
@@ -15078,15 +15078,15 @@ function roleLinesMixedContent(mod) {
     var key = line.t.trim()
     if (Object.prototype.hasOwnProperty.call(positions, key)) return
     positions[key] = globalPool.length
-    globalPool.push({ key: key, txt: line.t, line: line, index: index, w: Math.max(1, Number(line.w) || 1) })
+    globalPool.push({ key: key, txt: line.t, line: line, index: index, w: 1 })
   })
   var roleItems = rolePool.map(function (text) {
-    // 重叠文本仍保留全局逐句样式，但在角色池内与其他角色台词等概率。
+    // 相同文本合为一句，保留原全局逐句样式。
     var global = Object.prototype.hasOwnProperty.call(positions, text) ? globalPool[positions[text]] : null
     return { key: text, txt: global ? global.txt : text, line: global ? global.line : null, index: global ? global.index : undefined, w: 1 }
   })
-  // 先按 1:1 选池，再抽句；池大小、全局行权重和上一句均不改变选池概率。
-  var pool = globalPool.length && Math.random() >= 0.5 ? globalPool : roleItems
+  // 合并为一个等权池；角色与全局占比由不同语句的条数决定。
+  var pool = roleItems.concat(globalPool.filter(function (item) { return rolePool.indexOf(item.key) < 0 }))
   var id = roleLinesCurrentId()
   var memory = roleLinesMemory(mod)
   var available = pool.length > 1 ? pool.filter(function (item) { return item.key !== memory[id] }) : pool
@@ -15204,7 +15204,7 @@ function openRoleLinesEditor() {
     card.appendChild(enableLabel)
     var help = document.createElement('div')
     help.className = 'dshwv-bubsec'
-    help.textContent = '每行一条。角色台词与模块全局语句各占 50% 抽取机会；角色池内等概率，全局池内保留原权重。选中的池有多句时避免连重，只有一句时可重复。关闭或没有角色台词时使用全局语句。'
+    help.textContent = '每行一条。与模块原有语句合并去重后，每句话权重都为 1，按总条数等概率抽取。多句时避免连续重复，只有一句时可重复。关闭或没有角色台词时使用原全局语句及权重。'
     card.appendChild(help)
     roleLinesTextEl = document.createElement('textarea')
     roleLinesTextEl.rows = 10
